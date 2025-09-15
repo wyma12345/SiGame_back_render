@@ -78,9 +78,15 @@ async def websocket_endpoint_lobby(websocket: WebSocket):
     try:
         while True:
             data: dict = await websocket.receive_json()
-            if data["text"] == "Игорк готов":
-                await manager.screen_cast({"text": "игрок готов."}, player.game_id)
+            if "event" in data:
+
+                if data["event"] == "player_ready":
+                    await manager.screen_cast({"text": "игрок готов."}, player.game_id)
+
+            if "settings" in data and player.is_leader:
+                pass
+
+
 
     except WebSocketDisconnect:
         manager.disconnect(player.GUID)
-        await manager.screen_cast({"text": "Пользователь покинул чат.", "user_GUID":  player.GUID}, player.game_id)

@@ -1,4 +1,3 @@
-import enum
 from sqlalchemy.orm import sessionmaker, configure_mappers
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Boolean, JSON, create_engine, SmallInteger
 from sqlalchemy.ext.declarative import declarative_base

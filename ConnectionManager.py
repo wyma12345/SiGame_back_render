@@ -4,6 +4,7 @@ import uuid
 import random
 from typing import Dict, Union
 
+from sqlalchemy.orm import relationship
 from starlette.websockets import WebSocket
 
 from models import db
@@ -54,7 +55,7 @@ class ConnectionManager:
             if player is not None:
                 return player
             elif new_received_data == {}:  # если игрок не найден, а данных для создания нового нет
-                await websocket.send_json({"error": "Игрока с таким session_id нет"})
+                await websocket.send_json({"error": "user_not_found"})
                 return None
         # endregion
 
@@ -104,12 +105,14 @@ class ConnectionManager:
         db.refresh(player)  # обновляем данные
         if player.is_screen:  # запоминаем экран, игра создается только при создании экрана
             self.active_connections[game_id]["screen_GUID"] = player.GUID
-            await self.screen_cast({"text": "игра создана", "code": new_game.code}, game_id)
+            await self.screen_cast({"event": "game_created", "code": new_game.code, "user_GUID": player.GUID}, game_id)
         elif player.is_leader:  # запоминаем лидера
             self.active_connections[game_id]["leader_GUID"] = player.GUID
-            await self.screen_cast({"text": "Игрок подключился", "user_GUID": player.GUID, "is_leader": True}, game_id)
+            await websocket.send_json({"user_GUID": player.GUID})
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True}, game_id)
         else:
-            await self.screen_cast({"text": "Игрок подключился", "user_GUID": player.GUID, "is_leader": False}, game_id)
+            await websocket.send_json({"user_GUID": player.GUID})
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": False}, game_id)
         # endregion
 
         return player
@@ -121,14 +124,22 @@ class ConnectionManager:
         """
 
         game_id = find_game_id_for_user(received_user_GUID)
+        print(self.active_connections)
 
         if game_id in self.active_connections and received_user_GUID in self.active_connections[game_id]:
+
             del self.active_connections[game_id][received_user_GUID]
 
-            if not self.active_connections[game_id]:  # если игроков не осталось удаляем игру
+            if len(self.active_connections[game_id]) <= 2:  # если игроков не осталось удаляем игру
+
+                db.delete(db.query(Game).filter(Game.id == game_id).first())
                 del self.active_connections[game_id]
 
-        await self.screen_cast({"text": "Пользователь покинул чат.", "user_GUID": received_user_GUID}, game_id)
+            else:
+                print(self.active_connections)
+                self.screen_cast({"event": "user_disconnected", "user_GUID": received_user_GUID}, game_id)
+
+
 
     async def broad_cast(self, received_data: dict, received_game_id: int):
         """
@@ -145,7 +156,7 @@ class ConnectionManager:
         """
         if received_game_id in self.active_connections:
 
-            screen_player_GUID: str = self.__get_screen_GUID(received_game_id)  # ищем экран
+            screen_player_GUID = self.__get_screen_GUID(received_game_id)  # ищем экран
             if screen_player_GUID is None:
                 await self.broad_cast({"error": "Игрок с ролью экран не найден"}, received_game_id)
                 return

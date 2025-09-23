@@ -2,7 +2,7 @@ import json
 import uuid
 import random
 
-from fastapi import FastAPI, Cookie, Response, Header
+from fastapi import FastAPI, Cookie, Response, Header, Body
 
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -20,60 +20,78 @@ app = FastAPI()  # запуск приложения
 manager = ConnectionManager()
 
 
-# @app.get("/check_game/{session_id}")
-# async def check_game(session_id):
-#     """
-#     Проверяет наличие у пользователя активной игры
-#     :param session_id: токен
-#     :return:
-#     """
-#     player = db.query(Player).filter(Player.GUID == session_id).first()
-#     print(player)
-#     if player is None:  # если игрк не найден
-#         return {"active_game": "None"}
-#     return {"active_game": player.game_id}  # если игрок найден возвращаем id игры
-#
-#
-# @app.get("/start_new_game")
-# async def start_new_game():
-#     """
-#     Начинает новую игру после запроса с Экрана
-#     :return:
-#     """
-#     code_game = str(random.randint(100000, 999999))  # случайный код игры
-#     new_game = Game(code=code_game)  # создаем игру
-#     db.add(new_game)
-#     db.commit()
-#
-#     db.refresh(new_game)  # обновляем данные
-#     GUID = str(uuid.uuid4())  # GUID пользователя
-#     player_screen = Player(GUID=GUID, game_id=new_game.id, is_screen=True)  # создаем пользователя экран
-#     db.add(player_screen)
-#     db.commit()
-#
-#     response = JSONResponse(content={"code_game": code_game})
-#     response.set_cookie(key="session_id", value=GUID)
-#
-#     return response
+@app.post("/creategame")
+async def create_game(data=Body()):
+    """
+    Подключает и создает нового игрока
+    :return:
+    """
 
+    # region получение входящих данных из полученного Headers.new_received_data
+    received_game_code = data["game_code"] if "game_code" in data else ""
+    received_user_name = data["user_name"] if "user_name" in data else ""
+    received_user_is_screen = str.lower(data["is_screen"]) == "true" if "is_screen" in data else False
+    received_user_is_leader = str.lower(data["is_leader"]) == "true" if "is_leader" in data else False
+    # endregion
 
-connected_clients = []
+    # region Создание игрока
 
+    GUID = str(uuid.uuid4())  # GUID пользователя
+    content = {}
 
-@app.websocket("/lobby")
-async def websocket_endpoint_lobby(websocket: WebSocket):
+    if received_user_is_screen:  # если это экран
 
-    if "session_id" in websocket.cookies:  # если есть куки тогда его заносим
-        player = await manager.connect(websocket, websocket.cookies["session_id"])
-    elif "connect_data" in websocket.headers:
-        player = await manager.connect(websocket, "", json.loads(websocket.headers["connect_data"]))
+        code_game = str(random.randint(100000, 999999))  # случайный код игры
+        game = Game(code=code_game)  # создаем игру
+        db.add(game)
+        db.commit()
+        db.refresh(game)  # обновляем данные
+
+        player = Player(GUID=GUID, game_id=game.id, is_screen=True)  # создаем пользователя экран
+        db.add(player)
+        db.commit()
+
+        content.update({"game_code": game.code})
+
+    elif received_game_code != "":  # если не экран, то код должен быть
+
+        game = db.query(Game).filter(Game.code == received_game_code).first()  # ищем игру по коду
+        if game is None:  # если игры с таким кодом нет
+            return JSONResponse(content={"error": "game_not_found"}, status_code=400)
+
+        player = Player(GUID=GUID, game_id=game.id, name=received_user_name,
+                        is_leader=received_user_is_leader)  # создаем пользователя
+        db.add(player)
+        db.commit()
+
     else:
-        player = None
+        return JSONResponse(content={"error": "empty_code"}, status_code=400)
 
-    # Если что-то пошло не так
+    # endregion
+
+    # region подключение игрока
+    db.refresh(player)  # обновляем данные
+    error = manager.add_user(player.game_id, player.GUID, player.is_screen, player.is_leader)
+    # endregion
+
+    content.update({"event": "user_created", "user_GUID": player.GUID})
+    content.update(error)
+
+    if received_user_is_leader:
+        content.update({"packege_list": ["test1", "test2"]})
+
+    # response = JSONResponse(content=content)
+    # response.set_cookie(key="session_id", value=GUID)  # установка куки
+    return JSONResponse(content=content)
+
+
+@app.websocket("/{user_GUID}")
+async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
+
+    player = await manager.connect(websocket, user_GUID)
     if player is None:
-        await websocket.send_json({"error": "Пользователь не создан"})
-        await websocket.close()
+        await websocket.close(403, "bad_user_GUID")
+        return
 
     try:
         while True:

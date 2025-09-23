@@ -14,8 +14,22 @@ from my_db_func import find_game_id_for_user
 
 class ConnectionManager:
     def __init__(self):
-        # Хранение активных соединений в виде {game_id: {user_GUID: WebSocket, "screen_GUID": user_GUID, "leader_GUID": user_GUID}}
+
+        #region создание списков подключений
+        # Хранение активных соединений в виде {game_id: {user_GUID: WebSocket, }}
         self.active_connections: Dict[int, Dict[str, Union[WebSocket, str, None]]] = {}
+
+        # Храним данные в виде {game_id: {"screen_GUID": user_GUID, "leader_GUID": user_GUID}}
+        self.main_roles: Dict[int, Dict[str, Union[str, None]]] = {}
+
+        # Храним готовность в в иде {game_id: {"user_GUID": bool}}
+        self.ready_players: Dict[int, Dict[str, bool]] = {}
+        # endregion
+
+        games = db.query(Game).all()
+        for game in games:
+            self.active_connections[game.id] = {}
+            self.main_roles[game.id] = {"screen_GUID": None, "leader_GUID": None}
 
     def __get_screen_GUID(self, game_id) -> str:
         """
@@ -23,96 +37,72 @@ class ConnectionManager:
         :param game_id:
         :return:
         """
-        return self.active_connections[game_id]["screen_GUID"]
+        return self.main_roles[game_id]["screen_GUID"]
 
-    async def connect(self, websocket: WebSocket, received_user_GUID: str = "", new_received_data=None):
+    def add_user(self, game_id: int, user_GUID: str, is_screen: bool = False, is_leader: bool = False) -> dict:
         """
-        Если передан GUID ищет пользователя, иначе создает нового
-        Если это экран и новый пользователь, создает новую игру, иначе ищет игру по пользователю
+        Добавление пользователя с пустым соединением
+        :param is_leader:
+        :param is_screen:
+        :param user_GUID:
+        :param game_id:
+        :return:
+        """
+
+        if game_id not in self.active_connections:  # если игра только создана задаем значение основных ролей
+            self.main_roles[game_id] = {"screen_GUID": None, "leader_GUID": None}
+            self.active_connections[game_id] = {}
+
+        # region Проверки
+        if is_screen and is_leader:
+            return {"error": "Лидер не может быть экраном"}
+
+        if is_screen:
+            if self.main_roles[game_id]["screen_GUID"] is not None:
+                return {"error": "экран только один"}
+            self.main_roles[game_id]["screen_GUID"] = user_GUID
+
+        elif is_leader:
+            if self.main_roles[game_id]["leader_GUID"] is not None:
+                return {"error": "ведущий только один"}
+            self.main_roles[game_id]["leader_GUID"] = user_GUID
+
+        # endregion
+
+        # self.active_connections[game_id][user_GUID] = None  # создание пустого соединения для игрока
+
+        return {}
+
+    async def connect(self, websocket: WebSocket, user_GUID: str):
+        """
+        Ищет пользователя по переданному GUID
         Устанавливает соединение с пользователем.
         websocket.accept() — подтверждает подключение.
         """
 
-        # region получение входящих данных из полученного Headers.new_received_data
-        if new_received_data is None:
-            new_received_data = {}
-        new_received_game_code = new_received_data["game_code"] if "game_code" in new_received_data else ""
-        new_received_user_name = new_received_data["user_name"] if "user_name" in new_received_data else ""
-        new_received_user_is_screen = str.lower(
-            new_received_data["is_screen"]) == "true" if "is_screen" in new_received_data else False
-        new_received_user_is_leader = str.lower(
-            new_received_data["is_leader"]) == "true" if "is_leader" in new_received_data else False
-        # endregion
+        # region поиск пользователя по входящему GUID
+        player = db.query(Player).filter(Player.GUID == user_GUID).first()
+
+        # Если что-то пошло не так
+        if player is None:
+            return None
 
         await websocket.accept()  # подтверждаем соединение !важный момент!
-        player = None
-        new_game = None
 
-        # region поиск пользователя по входящему GUID
-        if received_user_GUID != "":  # ищем игрока по GUID
-            player = db.query(Player).filter(Player.GUID == received_user_GUID).first()
+        if player.game_id not in self.active_connections:
+            self.active_connections[player.game_id] = {}
+        self.active_connections[player.game_id][player.GUID] = websocket  # подключение игрока
 
-            if player is not None:
-                return player
-            elif new_received_data == {}:  # если игрок не найден, а данных для создания нового нет
-                await websocket.send_json({"error": "user_not_found"})
-                return None
-        # endregion
-
-        # region Создание игрока
-
-        # теперь создаем игрока если он не найден, но данные есть
-        if new_received_user_is_screen:  # если это новый экран
-
-            code_game = str(random.randint(100000, 999999))  # случайный код игры
-            new_game = Game(code=code_game)  # создаем игру
-            db.add(new_game)
-            db.commit()
-
-            db.refresh(new_game)  # обновляем данные
-            GUID = str(uuid.uuid4())  # GUID пользователя
-            player = Player(GUID=GUID, game_id=new_game.id, is_screen=True)  # создаем пользователя экран
-            db.add(player)
-            db.commit()
-
-        elif not new_received_user_is_screen and new_received_game_code != "":  # если не экран, то код должен быть
-
-            find_game = db.query(Game).filter(Game.code == new_received_game_code).first()  # ищем игру по коду
-            if find_game is None:  # если игры с таким кодом нет
-                await websocket.send_json({"error": "Игры с таким кодом нет"})
-                return
-
-            GUID = str(uuid.uuid4())  # GUID пользователя
-            player = Player(GUID=GUID, game_id=find_game.id, name=new_received_user_name,
-                            is_leader=new_received_user_is_leader)  # создаем пользователя
-            db.add(player)
-            db.commit()
-
-        else:
-            await websocket.send_json({"error": "Пришел пустой код"})
-            return
-        # endregion
-
-        # region Если игра пока не создана, занесение данных о подключении
-        game_id = player.game_id  # получаем id игры из игрока
-        if game_id not in self.active_connections:  # если в активных соединениях нет пока игры, то добавляем
-            self.active_connections[game_id] = {"screen_GUID": None, "leader_GUID": None}
-        # endregion
-
-        # region подключение игрока
-        self.active_connections[game_id][player.GUID] = websocket  # подключение игрока
-
-        db.refresh(player)  # обновляем данные
         if player.is_screen:  # запоминаем экран, игра создается только при создании экрана
-            self.active_connections[game_id]["screen_GUID"] = player.GUID
-            await self.screen_cast({"event": "game_created", "code": new_game.code, "user_GUID": player.GUID}, game_id)
+            self.main_roles[player.game_id]["screen_GUID"] = player.GUID
+            await websocket.send_json({"event": "user_connect", "user_GUID": player.GUID})
         elif player.is_leader:  # запоминаем лидера
-            self.active_connections[game_id]["leader_GUID"] = player.GUID
+            self.main_roles[player.game_id]["leader_GUID"] = player.GUID
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True}, game_id)
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True}, player.game_id)
         else:
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": False}, game_id)
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": False}, player.game_id)
         # endregion
 
         return player
@@ -124,29 +114,38 @@ class ConnectionManager:
         """
 
         game_id = find_game_id_for_user(received_user_GUID)
-        print(self.active_connections)
 
         if game_id in self.active_connections and received_user_GUID in self.active_connections[game_id]:
 
-            del self.active_connections[game_id][received_user_GUID]
+            # если это лидер или экран очищаем данные
+            if self.main_roles[game_id]["leader_GUID"] == self.active_connections[game_id][received_user_GUID]:
+                self.main_roles[game_id]["leader_GUID"] = None
+            if self.main_roles[game_id]["screen_GUID"] == self.active_connections[game_id][received_user_GUID]:
+                self.main_roles[game_id]["screen_GUID"] = None
+
+            del self.active_connections[game_id][received_user_GUID]  # удаляем соединение
 
             if len(self.active_connections[game_id]) <= 2:  # если игроков не осталось удаляем игру
 
                 db.delete(db.query(Game).filter(Game.id == game_id).first())
-                del self.active_connections[game_id]
+                db.commit()
+
+                if game_id in self.active_connections:
+                    del self.active_connections[game_id]
+                if game_id in self.main_roles:
+                    del self.main_roles[game_id]
+                if game_id in self.ready_players:
+                    del self.ready_players[game_id]
 
             else:
-                print(self.active_connections)
                 self.screen_cast({"event": "user_disconnected", "user_GUID": received_user_GUID}, game_id)
-
-
 
     async def broad_cast(self, received_data: dict, received_game_id: int):
         """
         Рассылает сообщение всем пользователям в комнате.
         """
         if received_game_id in self.active_connections:
-            for _, connection in self.active_connections[received_game_id].items():  # рассылаем всем пользователям кроме экрана
+            for _, connection in self.active_connections[received_game_id].items():  # рассылаем всем пользователям
                 if connection is not None:
                     await connection.send_json(received_data)
 
@@ -154,11 +153,11 @@ class ConnectionManager:
         """
         Отправка информации на экран
         """
-        if received_game_id in self.active_connections:
+        if received_game_id in self.main_roles:
 
             screen_player_GUID = self.__get_screen_GUID(received_game_id)  # ищем экран
             if screen_player_GUID is None:
-                await self.broad_cast({"error": "Игрок с ролью экран не найден"}, received_game_id)
+                await self.broad_cast({"error": "screen_not_found"}, received_game_id)
                 return
 
             connection = self.active_connections[received_game_id][screen_player_GUID]

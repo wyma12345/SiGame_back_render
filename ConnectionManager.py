@@ -2,11 +2,13 @@
 # версия 0.00.1
 import uuid
 import random
+from datetime import datetime, timedelta
 from typing import Dict, Union
 
 from sqlalchemy.orm import relationship
 from starlette.websockets import WebSocket
 
+from Settings import settings
 from models import db
 from models import Player, Game
 from my_db_func import find_game_id_for_user
@@ -25,6 +27,13 @@ class ConnectionManager:
         # Храним готовность в в иде {game_id: {"user_GUID": bool}}
         self.ready_players: Dict[int, Dict[str, bool]] = {}
         # endregion
+
+        old_games = db.query(Game).filter(Game.time_created < datetime.now() - timedelta(minutes=settings["game_lifetime"]))
+        if old_games:
+            for old_game in old_games:
+                print(old_game.code)
+                db.delete(old_game)
+            db.commit()
 
         games = db.query(Game).all()
         for game in games:

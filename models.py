@@ -43,7 +43,7 @@ class Game(Base):
     time_created = Column(DateTime(timezone=True), server_default=func.now())
     code: Mapped[str] = Column(String, nullable=False)
 
-    players = relationship("Player", back_populates="game", cascade="all,delete")
+    players = relationship("Player", back_populates="game", cascade="all, delete")
 
     package_id = Column(Integer, ForeignKey('packages.id'), nullable=True)
     package: Mapped["Package"] = relationship("Package", back_populates="games")

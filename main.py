@@ -3,11 +3,13 @@ import uuid
 import random
 
 from fastapi import FastAPI, Cookie, Response, Header, Body
+from starlette.middleware.cors import CORSMiddleware
 
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ConnectionManager import ConnectionManager
+from Settings import settings
 from models import Player, Package, Game, db
 
 # region Константы
@@ -15,6 +17,14 @@ length_GUID = 24
 # endregion
 
 app = FastAPI()  # запуск приложения
+
+app.add_middleware(  # настраиваем CORS
+    CORSMiddleware,
+    allow_origins=settings["origins"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # экземпляр класса ConnectionManager
 manager = ConnectionManager()

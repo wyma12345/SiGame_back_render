@@ -17,7 +17,7 @@ from my_db_func import find_game_id_for_user
 class ConnectionManager:
     def __init__(self):
 
-        #region создание списков подключений
+        # region создание списков подключений
         # Хранение активных соединений в виде {game_id: {user_GUID: WebSocket, }}
         self.active_connections: Dict[int, Dict[str, Union[WebSocket, str, None]]] = {}
 
@@ -28,7 +28,8 @@ class ConnectionManager:
         self.ready_players: Dict[int, Dict[str, bool]] = {}
         # endregion
 
-        old_games = db.query(Game).filter(Game.time_created < datetime.now() - timedelta(minutes=settings["game_lifetime"]))
+        old_games = db.query(Game).filter(
+            Game.time_created < datetime.now() - timedelta(minutes=settings["game_lifetime"]))
         if old_games:
             for old_game in old_games:
                 print(old_game.code)
@@ -39,6 +40,8 @@ class ConnectionManager:
         for game in games:
             self.active_connections[game.id] = {}
             self.main_roles[game.id] = {"screen_GUID": None, "leader_GUID": None}
+
+        print(self.active_connections)
 
     def __get_screen_GUID(self, game_id) -> str:
         """
@@ -69,12 +72,10 @@ class ConnectionManager:
         if is_screen:
             if self.main_roles[game_id]["screen_GUID"] is not None:
                 return {"error": "экран только один"}
-            self.main_roles[game_id]["screen_GUID"] = user_GUID
 
         elif is_leader:
             if self.main_roles[game_id]["leader_GUID"] is not None:
                 return {"error": "ведущий только один"}
-            self.main_roles[game_id]["leader_GUID"] = user_GUID
 
         # endregion
 
@@ -108,21 +109,24 @@ class ConnectionManager:
         elif player.is_leader:  # запоминаем лидера
             self.main_roles[player.game_id]["leader_GUID"] = player.GUID
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True}, player.game_id)
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True},
+                                   player.game_id)
         else:
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": False}, player.game_id)
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": False},
+                                   player.game_id)
         # endregion
 
         return player
 
-    def disconnect(self, received_user_GUID: str):
+    def disconnect(self, received_user_GUID: str, game_id: int = 0):
         """
         Закрывает соединение и удаляет его из списка активных подключений.
         Если в комнате больше нет пользователей, удаляет игру из списка активных подключений.
         """
 
-        game_id = find_game_id_for_user(received_user_GUID)
+        if game_id == 0:
+            game_id = find_game_id_for_user(received_user_GUID)
 
         if game_id in self.active_connections and received_user_GUID in self.active_connections[game_id]:
 
@@ -171,3 +175,11 @@ class ConnectionManager:
 
             connection = self.active_connections[received_game_id][screen_player_GUID]
             await connection.send_json(received_data)
+
+    async def player_ready(self, user_GUID: str, game_id: int) -> dict:
+
+        if game_id not in self.ready_players:
+            self.ready_players[game_id] = {}
+        self.ready_players[game_id][user_GUID] = True
+
+        return self.ready_players[game_id]

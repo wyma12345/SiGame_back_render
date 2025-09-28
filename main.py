@@ -109,7 +109,9 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
             if "event" in data:
 
                 if data["event"] == "player_ready":
-                    await manager.screen_cast({"event": "player_ready", "user_GUID": player.GUID}, player.game_id)
+                    ready_players = await manager.player_ready(player.GUID, player.game_id)
+                    await manager.screen_cast({"event": "player_ready", "user_GUID": player.GUID,
+                                               "reasy_players": ready_players}, player.game_id)
 
             if "settings" in data and player.is_leader:
                 pass
@@ -117,4 +119,4 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
 
 
     except WebSocketDisconnect:
-        manager.disconnect(player.GUID)
+        manager.disconnect(player.GUID, player.game_id)

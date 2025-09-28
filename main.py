@@ -20,7 +20,7 @@ app = FastAPI()  # запуск приложения
 
 app.add_middleware(  # настраиваем CORS
     CORSMiddleware,
-    allow_origins=settings["origins"],
+    allow_origins=['*'],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

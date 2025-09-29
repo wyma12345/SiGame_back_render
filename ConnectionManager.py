@@ -3,7 +3,7 @@
 import uuid
 import random
 from datetime import datetime, timedelta
-from typing import Dict, Union
+from typing import Dict, Union, List, Set
 
 from sqlalchemy.orm import relationship
 from starlette.websockets import WebSocket
@@ -25,7 +25,7 @@ class ConnectionManager:
         self.main_roles: Dict[int, Dict[str, Union[str, None]]] = {}
 
         # Храним готовность в в иде {game_id: {"user_GUID": bool}}
-        self.ready_players: Dict[int, Dict[str, bool]] = {}
+        self.ready_players: Dict[int, Set[str]] = {}
         # endregion
 
         old_games = db.query(Game).filter(
@@ -138,7 +138,7 @@ class ConnectionManager:
 
             del self.active_connections[game_id][received_user_GUID]  # удаляем соединение
 
-            if len(self.active_connections[game_id]) <= 2:  # если игроков не осталось удаляем игру
+            if not self.active_connections[game_id]:  # если игроков не осталось удаляем игру
 
                 db.delete(db.query(Game).filter(Game.id == game_id).first())
                 db.commit()
@@ -176,10 +176,14 @@ class ConnectionManager:
             connection = self.active_connections[received_game_id][screen_player_GUID]
             await connection.send_json(received_data)
 
-    async def player_ready(self, user_GUID: str, game_id: int) -> dict:
+    async def player_ready(self, user_GUID: str, game_id: int, is_ready: bool, ) -> list:
 
         if game_id not in self.ready_players:
-            self.ready_players[game_id] = {}
-        self.ready_players[game_id][user_GUID] = True
+            self.ready_players[game_id] = set()
 
-        return self.ready_players[game_id]
+        if is_ready:
+            self.ready_players[game_id].add(user_GUID)
+        else:
+            self.ready_players[game_id].discard(user_GUID)
+
+        return list(self.ready_players[game_id])

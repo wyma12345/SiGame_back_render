@@ -108,10 +108,12 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
             data: dict = await websocket.receive_json()
             if "event" in data:
 
-                if data["event"] == "player_ready":
-                    ready_players = await manager.player_ready(player.GUID, player.game_id)
-                    await manager.screen_cast({"event": "player_ready", "user_GUID": player.GUID,
-                                               "reasy_players": ready_players}, player.game_id)
+                if data["event"] in ("player_ready", "player_unready"):
+                    ready_players = await manager.player_ready(player.GUID, player.game_id, data["event"] == "player_ready")
+                    await websocket.send_json({"status": "success"})
+                    await manager.screen_cast({"event": data["event"], "user_GUID": player.GUID,
+                                               "ready_players": ready_players}, player.game_id)
+
 
             if "settings" in data and player.is_leader:
                 pass

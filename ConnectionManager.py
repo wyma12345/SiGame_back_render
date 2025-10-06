@@ -105,7 +105,18 @@ class ConnectionManager:
 
         if player.is_screen:  # запоминаем экран, игра создается только при создании экрана
             self.main_roles[player.game_id]["screen_GUID"] = player.GUID
+
+            active_players = self.active_connections[player.game_id].keys()  # указываем готовых игроков
+            active_players_info = {}
+            for player_GUID in active_players:
+                active_players_info[player_GUID] = {
+                    "player_ready": player_GUID in self.ready_players,
+                    "user_GUID": player_GUID,
+                    "is_leader": player_GUID == self.main_roles[player.game_id]["leader_GUID"]
+                }
+
             await websocket.send_json({"event": "user_connect", "user_GUID": player.GUID})
+
         elif player.is_leader:  # запоминаем лидера
             self.main_roles[player.game_id]["leader_GUID"] = player.GUID
             await websocket.send_json({"user_GUID": player.GUID})
@@ -187,3 +198,20 @@ class ConnectionManager:
             self.ready_players[game_id].discard(user_GUID)
 
         return list(self.ready_players[game_id])
+
+    async def start_game(self, player: Player):
+        """
+        Начинаем игру
+        :param player:
+        :return:
+        """
+        if not player.is_leader:
+            await self.active_connections[player.game_id][player.GUID].send_json({"error": "это не лидер"})
+
+        if self.active_connections[player.game_id] == self.ready_players[player.game_id]:  # если все подключенные игроки готовы
+            await self.broad_cast({"event": "game_start"}, player.game_id)
+
+
+
+
+

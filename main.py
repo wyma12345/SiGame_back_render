@@ -113,6 +113,8 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
                     await websocket.send_json({"status": "success"})
                     await manager.screen_cast({"event": data["event"], "user_GUID": player.GUID,
                                                "ready_players": ready_players}, player.game_id)
+                if data["event"] == "start_game":
+                    await websocket.send_json(manager.start_game(player))
 
 
             if "settings" in data and player.is_leader:

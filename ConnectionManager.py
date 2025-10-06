@@ -112,7 +112,8 @@ class ConnectionManager:
                 active_players_info[player_GUID] = {
                     "player_ready": player_GUID in self.ready_players,
                     "user_GUID": player_GUID,
-                    "is_leader": player_GUID == self.main_roles[player.game_id]["leader_GUID"]
+                    "is_leader": player_GUID == self.main_roles[player.game_id]["leader_GUID"],
+                    "user_name": player.name,
                 }
 
             await websocket.send_json({"event": "user_connect", "user_GUID": player.GUID})
@@ -124,7 +125,7 @@ class ConnectionManager:
                                    player.game_id)
         else:
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": False},
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name},
                                    player.game_id)
         # endregion
 

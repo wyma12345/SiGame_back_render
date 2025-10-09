@@ -51,30 +51,27 @@ class ConnectionManager:
         """
         return self.main_roles[game_id]["screen_GUID"]
 
-    def add_user(self, game_id: int, user_GUID: str, is_screen: bool = False, is_leader: bool = False) -> dict:
+    def check_add_player(self, player: Player) -> dict:
         """
         Добавление пользователя с пустым соединением
-        :param is_leader:
-        :param is_screen:
-        :param user_GUID:
-        :param game_id:
+        :param player:
         :return:
         """
 
-        if game_id not in self.active_connections:  # если игра только создана задаем значение основных ролей
-            self.main_roles[game_id] = {"screen_GUID": None, "leader_GUID": None}
-            self.active_connections[game_id] = {}
+        if player.game_id not in self.active_connections:  # если игра только создана задаем значение основных ролей
+            self.main_roles[player.game_id] = {"screen_GUID": None, "leader_GUID": None}
+            self.active_connections[player.game_id] = {}
 
         # region Проверки
-        if is_screen and is_leader:
+        if player.is_screen and player.is_leader:
             return {"error": "Лидер не может быть экраном"}
 
-        if is_screen:
-            if self.main_roles[game_id]["screen_GUID"] is not None:
+        if player.is_screen:
+            if self.main_roles[player.game_id]["screen_GUID"] is not None:
                 return {"error": "экран только один"}
 
-        elif is_leader:
-            if self.main_roles[game_id]["leader_GUID"] is not None:
+        elif player.is_leader:
+            if self.main_roles[player.game_id]["leader_GUID"] is not None:
                 return {"error": "ведущий только один"}
 
         # endregion

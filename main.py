@@ -58,8 +58,6 @@ async def create_game(data=Body()):
         db.refresh(game)  # обновляем данные
 
         player = Player(GUID=GUID, game_id=game.id, is_screen=True)  # создаем пользователя экран
-        db.add(player)
-        db.commit()
 
         content.update({"game_code": game.code})
 
@@ -71,21 +69,22 @@ async def create_game(data=Body()):
 
         player = Player(GUID=GUID, game_id=game.id, name=received_user_name,
                         is_leader=received_user_is_leader)  # создаем пользователя
-        db.add(player)
-        db.commit()
 
     else:
         return JSONResponse(content={"error": "empty_code"}, status_code=400)
 
     # endregion
 
-    # region подключение игрока
-    db.refresh(player)  # обновляем данные
-    error = manager.add_user(player.game_id, player.GUID, player.is_screen, player.is_leader)
+    # region проверка возможности подключения игрока
+    error: dict = manager.check_add_player(player)
+    if error != {}:
+        return JSONResponse(content=error)
     # endregion
 
-    content.update({"event": "user_created", "user_GUID": player.GUID})
-    content.update(error)
+    db.add(player)
+    db.commit()
+
+    content = {"event": "user_created", "user_GUID": player.GUID}
 
     if received_user_is_leader:
         content.update({"packege_list": ["test1", "test2"]})

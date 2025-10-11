@@ -84,7 +84,7 @@ async def create_game(data=Body()):
     db.add(player)
     db.commit()
 
-    content = {"event": "user_created", "user_GUID": player.GUID}
+    content.update({"event": "user_created", "user_GUID": player.GUID})
 
     if received_user_is_leader:
         content.update({"packege_list": ["test1", "test2"]})

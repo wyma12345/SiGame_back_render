@@ -8,7 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ConnectionManager import ConnectionManager
+from ConnectionManager import ConnectionManager, upload_package
 from Settings import settings
 from models import Player, Package, Game, db
 
@@ -29,6 +29,10 @@ app.add_middleware(  # настраиваем CORS
 # экземпляр класса ConnectionManager
 manager = ConnectionManager()
 
+@app.get("/test")
+async def test():
+    upload_package()
+    return {"gog":"dd"}
 
 @app.post("/creategame")
 async def create_game(data=Body()):
@@ -115,6 +119,17 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
                 if data["event"] == "start_game":
                     await websocket.send_json(manager.start_game(player))
 
+                if data["event"] == "file_upload" and "package" in data:
+
+                    package = data["package"]
+
+                    if "name" not in package or package["name"]:
+                        await websocket.send_json({"error": "не передано имя пака"})
+                    if "bin_data" not in package:
+                        await websocket.send_json({"error": "не переданы бинарные данные пака"})
+
+                    error = await manager.upload_package(package["bin_data"], package["name"], player)
+                    await websocket.send_json(error)
 
             if "settings" in data and player.is_leader:
                 pass

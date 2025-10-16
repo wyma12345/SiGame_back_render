@@ -2,19 +2,51 @@
 # версия 0.00.1
 import uuid
 import random
+import json
+import xmltodict
 from datetime import datetime, timedelta
 from typing import Dict, Union, List, Set
-
+import urllib.parse
+from sqlalchemy import JSON
 from sqlalchemy.orm import relationship
 from starlette.websockets import WebSocket
 
 from Settings import settings
-from models import db
+from models import db, Package
 from models import Player, Game
-from my_db_func import find_game_id_for_user
+from my_db_func import find_game_id_for_user, unpack_zip_advanced, list_zip_contents
+
+
+def upload_package():
+    # package_path: str = f"packages/{player.game_id}.zip"
+    upload_package_path: str = f"packages/test_package.zip"
+    finally_package_path: str = f"packages/unpacked/test_package"
+    # with open(package_path, 'wb') as f:  # Записываем полученную строку байтов как файл
+    #     f.write(bin_data)
+
+    error: bool = unpack_zip_advanced(upload_package_path, finally_package_path)
+
+    if error:
+        return {"error": "не удалось распаковать файл"}
+
+    with open(finally_package_path + "/content.xml",  encoding="utf8") as xml_file:
+        content = xmltodict.parse(xml_file.read())
+
+    if content is None or content == {}:
+        return {"error": "не удалось перевести в JSON content.xml"}
+
+    #json_data = json.dumps(content, ensure_ascii=False)
+
+    package: Package = Package(templates_pack=finally_package_path, name="test",
+                               content=content)  # загрузили пак
+    db.add(package)  # сохраняем в БД
+    db.commit()
+    db.refresh(package)  # обновляем данные из бд, на всякий
+
 
 
 class ConnectionManager:
+
     def __init__(self):
 
         # region создание списков подключений
@@ -206,10 +238,39 @@ class ConnectionManager:
         if not player.is_leader:
             await self.active_connections[player.game_id][player.GUID].send_json({"error": "это не лидер"})
 
-        if self.active_connections[player.game_id] == self.ready_players[player.game_id]:  # если все подключенные игроки готовы
+        if self.active_connections[player.game_id] == self.ready_players[
+            player.game_id]:  # если все подключенные игроки готовы
             await self.broad_cast({"event": "game_start"}, player.game_id)
 
+    async def upload_package(self, bin_data: bin, name_package: str, player: Player) -> dict:
 
+        exists_package: Package = db.query(Package).filter(Package.name == name_package).first()
+        if exists_package is not None:
+            return {"error": "Уже существует такой пак"}
 
+        upload_package_path: str = f"packages/{name_package}.zip"
+        finally_package_path: str = f"packages/unpacked/{name_package}"
 
+        with open(upload_package_path, 'wb') as f:  # Записываем полученную строку байтов как файл
+            f.write(bin_data)
 
+        error: bool = unpack_zip_advanced(upload_package_path, finally_package_path)
+
+        if error:
+            return {"error": "не удалось распаковать файл"}
+
+        with open(finally_package_path + "/content.xml", encoding="utf8") as xml_file:
+            content = xmltodict.parse(xml_file.read())
+
+        if content is None:
+            return {"error": "не удалось перевести в JSON content.xml"}
+
+        package: Package = Package(templates_pack=finally_package_path, name=name_package,
+                                   content=content)  # загрузили пак
+        db.add(package)  # сохраняем в БД
+        db.commit()
+        db.refresh(package)  # обновляем данные из бд, на всякий
+
+        game = db.query(Game).filter(Game.id == player.game_id).first()  # ищем игру по коду
+        game.package_id = package.id
+        db.commit()  # коммитим без add, т.к. игра уже есть

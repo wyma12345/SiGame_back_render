@@ -79,6 +79,10 @@ class ConnectionManager:
             if self.main_roles[player.game_id]["leader_GUID"] is not None:
                 return {"error": "ведущий только один"}
 
+        if not player.is_leader and not player.is_screen:
+            if db.query(Player).filter(Player.name == player.name,  Player.game_id == player.game_id).first() is None:
+                return {"error": "имя игрока дублируется"}
+
         # endregion
 
         # self.active_connections[game_id][user_GUID] = None  # создание пустого соединения для игрока
@@ -136,8 +140,8 @@ class ConnectionManager:
             await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True,  "package_list": package_list},
                                    player.game_id)
         else:
-            await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name, "user_ready": player.GUID in self.ready_players[player.game_id]},
+            await websocket.send_json({"user_GUID": player.GUID,  "user_ready": player.GUID in self.ready_players[player.game_id]})
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name},
                                    player.game_id)
         # endregion
 

@@ -29,11 +29,6 @@ app.add_middleware(  # настраиваем CORS
 # экземпляр класса ConnectionManager
 manager = ConnectionManager()
 
-@app.get("/test")
-async def test():
-    upload_package()
-    return {"gog":"dd"}
-
 @app.post("/creategame")
 async def create_game(data=Body()):
     """
@@ -90,9 +85,6 @@ async def create_game(data=Body()):
 
     content.update({"event": "user_created", "user_GUID": player.GUID})
 
-    if received_user_is_leader:
-        content.update({"packege_list": ["test1", "test2"]})
-
     # response = JSONResponse(content=content)
     # response.set_cookie(key="session_id", value=GUID)  # установка куки
     return JSONResponse(content=content)
@@ -125,8 +117,10 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
 
                     if "name" not in package or package["name"]:
                         await websocket.send_json({"error": "не передано имя пака"})
+                        continue
                     if "bin_data" not in package:
                         await websocket.send_json({"error": "не переданы бинарные данные пака"})
+                        continue
 
                     error = await manager.upload_package(package["bin_data"], package["name"], player)
                     await websocket.send_json(error)
@@ -134,7 +128,5 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
             if "settings" in data and player.is_leader:
                 pass
 
-
-
     except WebSocketDisconnect:
-        manager.disconnect(player.GUID, player.game_id)
+        manager.disconnect(player)

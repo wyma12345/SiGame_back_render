@@ -52,6 +52,7 @@ class Game(Base):
 class Package(Base):
     __tablename__ = 'packages'
     id = Column(Integer, primary_key=True, index=True, nullable=False)
+    default: Mapped[bool] = Column(Boolean, default=False)
     templates_pack = Column(String, nullable=False)
     name = Column(String, nullable=False)
     content = Column(JSON, nullable=False)

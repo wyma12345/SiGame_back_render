@@ -1,5 +1,6 @@
 # Хранение подключенных клиентов
 # версия 0.00.1
+import shutil
 import uuid
 import random
 import json
@@ -15,34 +16,6 @@ from Settings import settings
 from models import db, Package
 from models import Player, Game
 from my_db_func import find_game_id_for_user, unpack_zip_advanced, list_zip_contents
-
-
-def upload_package():
-    # package_path: str = f"packages/{player.game_id}.zip"
-    upload_package_path: str = f"packages/test_package.zip"
-    finally_package_path: str = f"packages/unpacked/test_package"
-    # with open(package_path, 'wb') as f:  # Записываем полученную строку байтов как файл
-    #     f.write(bin_data)
-
-    error: bool = unpack_zip_advanced(upload_package_path, finally_package_path)
-
-    if error:
-        return {"error": "не удалось распаковать файл"}
-
-    with open(finally_package_path + "/content.xml",  encoding="utf8") as xml_file:
-        content = xmltodict.parse(xml_file.read())
-
-    if content is None or content == {}:
-        return {"error": "не удалось перевести в JSON content.xml"}
-
-    #json_data = json.dumps(content, ensure_ascii=False)
-
-    package: Package = Package(templates_pack=finally_package_path, name="test",
-                               content=content)  # загрузили пак
-    db.add(package)  # сохраняем в БД
-    db.commit()
-    db.refresh(package)  # обновляем данные из бд, на всякий
-
 
 
 class ConnectionManager:
@@ -133,6 +106,10 @@ class ConnectionManager:
         self.active_connections[player.game_id][player.GUID] = websocket  # подключение игрока
 
         if player.is_screen:  # запоминаем экран, игра создается только при создании экрана
+
+            if self.main_roles[player.game_id]["screen_GUID"] is not None:
+                return None
+
             self.main_roles[player.game_id]["screen_GUID"] = player.GUID
 
             active_players = self.active_connections[player.game_id].keys()  # указываем готовых игроков
@@ -148,51 +125,72 @@ class ConnectionManager:
             await websocket.send_json({"event": "user_connect", "user_GUID": player.GUID})
 
         elif player.is_leader:  # запоминаем лидера
+
+            if self.main_roles[player.game_id]["leader_GUID"] is not None:
+                return None
+
             self.main_roles[player.game_id]["leader_GUID"] = player.GUID
+            package_list = ["test1", "test2", "test3"]
+
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True},
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True,  "package_list": package_list},
                                    player.game_id)
         else:
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name},
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name, "user_ready": player.GUID in self.ready_players[player.game_id]},
                                    player.game_id)
         # endregion
 
         return player
 
-    def disconnect(self, received_user_GUID: str, game_id: int = 0):
+    def disconnect(self, player:Player):
         """
         Закрывает соединение и удаляет его из списка активных подключений.
         Если в комнате больше нет пользователей, удаляет игру из списка активных подключений.
         """
 
-        if game_id == 0:
-            game_id = find_game_id_for_user(received_user_GUID)
+        if player.game_id == 0:
+            player.game_id = find_game_id_for_user(Player.GUID)
 
-        if game_id in self.active_connections and received_user_GUID in self.active_connections[game_id]:
+        if player.game_id in self.active_connections and Player.GUID in self.active_connections[player.game_id]:
 
             # если это лидер или экран очищаем данные
-            if self.main_roles[game_id]["leader_GUID"] == self.active_connections[game_id][received_user_GUID]:
-                self.main_roles[game_id]["leader_GUID"] = None
-            if self.main_roles[game_id]["screen_GUID"] == self.active_connections[game_id][received_user_GUID]:
-                self.main_roles[game_id]["screen_GUID"] = None
+            if self.main_roles[player.game_id]["leader_GUID"] == self.active_connections[player.game_id][Player.GUID]:
+                self.main_roles[player.game_id]["leader_GUID"] = None
+            if self.main_roles[player.game_id]["screen_GUID"] == self.active_connections[player.game_id][Player.GUID]:
+                self.main_roles[player.game_id]["screen_GUID"] = None
 
-            del self.active_connections[game_id][received_user_GUID]  # удаляем соединение
+            del self.active_connections[player.game_id][Player.GUID]  # удаляем соединение
+            await self.screen_cast({"event": "user_disconnect"}, player.game_id)
 
-            if not self.active_connections[game_id]:  # если игроков не осталось удаляем игру
+            if not self.active_connections[player.game_id]:  # если игроков не осталось удаляем игру
 
-                db.delete(db.query(Game).filter(Game.id == game_id).first())
+                db.delete(db.query(Game).filter(Game.id == player.game_id).first())
                 db.commit()
 
-                if game_id in self.active_connections:
-                    del self.active_connections[game_id]
-                if game_id in self.main_roles:
-                    del self.main_roles[game_id]
-                if game_id in self.ready_players:
-                    del self.ready_players[game_id]
+                if player.game_id in self.active_connections:
+                    del self.active_connections[player.game_id]
+                if player.game_id in self.main_roles:
+                    del self.main_roles[player.game_id]
+                if player.game_id in self.ready_players:
+                    del self.ready_players[player.game_id]
+
+                # удаляем пак
+                game: Game = player.game  # ищем игру
+                if game is None:
+                    return
+
+                package: Package = game.package  # ищем пак
+                if package is None or package.default:  # если пак найден или он изначально загруженный
+                    return
+
+                shutil.rmtree("packages/unpacked/" + package.name)
+
+                db.delete(package)
+                db.commit()
 
             else:
-                self.screen_cast({"event": "user_disconnected", "user_GUID": received_user_GUID}, game_id)
+                self.screen_cast({"event": "user_disconnected", "user_GUID": Player.GUID}, player.game_id)
 
     async def broad_cast(self, received_data: dict, received_game_id: int):
         """

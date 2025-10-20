@@ -8,7 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ConnectionManager import ConnectionManager, upload_package
+from ConnectionManager import ConnectionManager
 from Settings import settings
 from models import Player, Package, Game, db
 

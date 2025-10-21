@@ -129,4 +129,4 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
                 pass
 
     except WebSocketDisconnect:
-        manager.disconnect(player)
+        await manager.disconnect(player)

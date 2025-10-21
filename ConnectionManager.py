@@ -80,7 +80,9 @@ class ConnectionManager:
                 return {"error": "ведущий только один"}
 
         if not player.is_leader and not player.is_screen:
-            if db.query(Player).filter(Player.name == player.name,  Player.game_id == player.game_id).first() is None:
+            if player.name == "":
+                return {"error": "имя игрока пустое"}
+            if db.query(Player).filter(Player.name == player.name,  Player.game_id == player.game_id).first() is not None:
                 return {"error": "имя игрока дублируется"}
 
         # endregion
@@ -140,31 +142,34 @@ class ConnectionManager:
             await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True,  "package_list": package_list},
                                    player.game_id)
         else:
-            await websocket.send_json({"user_GUID": player.GUID,  "user_ready": player.GUID in self.ready_players[player.game_id]})
+
+            player_ready = player.game_id in self.ready_players and player.GUID in self.ready_players[player.game_id]  # готов ли игрок
+
+            await websocket.send_json({"user_GUID": player.GUID,  "user_ready": player_ready})
             await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name},
                                    player.game_id)
         # endregion
 
         return player
 
-    def disconnect(self, player:Player):
+    async def disconnect(self, player: Player):
         """
         Закрывает соединение и удаляет его из списка активных подключений.
         Если в комнате больше нет пользователей, удаляет игру из списка активных подключений.
         """
 
         if player.game_id == 0:
-            player.game_id = find_game_id_for_user(Player.GUID)
+            player.game_id = find_game_id_for_user(player.GUID)
 
-        if player.game_id in self.active_connections and Player.GUID in self.active_connections[player.game_id]:
+        if player.game_id in self.active_connections and player.GUID in self.active_connections[player.game_id].keys():
 
             # если это лидер или экран очищаем данные
-            if self.main_roles[player.game_id]["leader_GUID"] == self.active_connections[player.game_id][Player.GUID]:
+            if self.main_roles[player.game_id]["leader_GUID"] == self.active_connections[player.game_id][player.GUID]:
                 self.main_roles[player.game_id]["leader_GUID"] = None
-            if self.main_roles[player.game_id]["screen_GUID"] == self.active_connections[player.game_id][Player.GUID]:
+            if self.main_roles[player.game_id]["screen_GUID"] == self.active_connections[player.game_id][player.GUID]:
                 self.main_roles[player.game_id]["screen_GUID"] = None
 
-            del self.active_connections[player.game_id][Player.GUID]  # удаляем соединение
+            del self.active_connections[player.game_id][player.GUID]  # удаляем соединение
             await self.screen_cast({"event": "user_disconnect"}, player.game_id)
 
             if not self.active_connections[player.game_id]:  # если игроков не осталось удаляем игру
@@ -194,7 +199,7 @@ class ConnectionManager:
                 db.commit()
 
             else:
-                self.screen_cast({"event": "user_disconnected", "user_GUID": Player.GUID}, player.game_id)
+                await self.screen_cast({"event": "user_disconnected", "user_GUID": player.GUID}, player.game_id)
 
     async def broad_cast(self, received_data: dict, received_game_id: int):
         """
@@ -216,8 +221,9 @@ class ConnectionManager:
                 await self.broad_cast({"error": "screen_not_found"}, received_game_id)
                 return
 
-            connection = self.active_connections[received_game_id][screen_player_GUID]
-            await connection.send_json(received_data)
+            if received_game_id in self.active_connections and screen_player_GUID in self.active_connections[received_game_id]:
+                connection = self.active_connections[received_game_id][screen_player_GUID]
+                await connection.send_json(received_data)
 
     async def player_ready(self, user_GUID: str, game_id: int, is_ready: bool, ) -> list:
 

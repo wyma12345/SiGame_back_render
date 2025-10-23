@@ -41,12 +41,28 @@ class ConnectionManager:
                 db.delete(old_game)
             db.commit()
 
+        game_id_delete: bool = False
         games = db.query(Game).all()
         for game in games:
+
+            if game.time_created < (datetime.today() - timedelta(hours=1)):
+                db.delete(game)
+                game_id_delete = True
+
             self.active_connections[game.id] = {}
             self.main_roles[game.id] = {"screen_GUID": None, "leader_GUID": None}
+            self.ready_players[game.id] = set()
 
-        print(self.active_connections)
+        if game_id_delete:
+            db.commit()
+
+        p = db.query(Player).all()
+        for i in p:
+            db.delete(i)
+        db.commit()
+
+        print("active_connections:", self.active_connections)
+        print("games:", db.query(Game).all())
 
     def __get_screen_GUID(self, game_id) -> str:
         """
@@ -66,6 +82,7 @@ class ConnectionManager:
         if player.game_id not in self.active_connections:  # если игра только создана задаем значение основных ролей
             self.main_roles[player.game_id] = {"screen_GUID": None, "leader_GUID": None}
             self.active_connections[player.game_id] = {}
+            self.ready_players[player.game_id] = set()
 
         # region Проверки
         if player.is_screen and player.is_leader:
@@ -82,7 +99,8 @@ class ConnectionManager:
         if not player.is_leader and not player.is_screen:
             if player.name == "":
                 return {"error": "имя игрока пустое"}
-            if db.query(Player).filter(Player.name == player.name,  Player.game_id == player.game_id).first() is not None:
+            if db.query(Player).filter(Player.name == player.name,
+                                       Player.game_id == player.game_id).first() is not None:
                 return {"error": "имя игрока дублируется"}
 
         # endregion
@@ -119,9 +137,10 @@ class ConnectionManager:
             self.main_roles[player.game_id]["screen_GUID"] = player.GUID
 
             active_players_info = []
-            usual_players = db.query(Player).filter(Player.game_id == player.game_id, not Player.is_screen).all()
+            usual_players = db.query(Player).filter(Player.game_id == player.game_id).all()
+
             for usual_player in usual_players:
-                if usual_player.GUID in self.active_connections[player.game_id].keys():
+                if usual_player.GUID in self.active_connections[player.game_id].keys() and not usual_player.is_screen:
                     active_players_info.append({
                         "user_name": usual_player.name,
                         "player_ready": usual_player.GUID in self.ready_players[player.game_id],
@@ -129,7 +148,8 @@ class ConnectionManager:
                         "is_leader": usual_player.GUID == self.main_roles[player.game_id]["leader_GUID"]
                     })
 
-            await websocket.send_json({"event": "user_connect", "user_GUID": player.GUID, "players_info": active_players_info})
+            await websocket.send_json(
+                {"event": "user_connect", "user_GUID": player.GUID, "players_info": active_players_info})
 
         elif player.is_leader:  # запоминаем лидера
 
@@ -140,14 +160,17 @@ class ConnectionManager:
             package_list = ["test1", "test2", "test3"]
 
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "is_leader": True,  "package_list": package_list},
-                                   player.game_id)
+            await self.screen_cast(
+                {"event": "user_connect", "user_GUID": player.GUID, "is_leader": True, "package_list": package_list},
+                player.game_id)
         else:
 
-            player_ready = player.game_id in self.ready_players and player.GUID in self.ready_players[player.game_id]  # готов ли игрок
+            player_ready = player.game_id in self.ready_players and player.GUID in self.ready_players[
+                player.game_id]  # готов ли игрок
 
-            await websocket.send_json({"user_GUID": player.GUID,  "user_ready": player_ready})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name, "user_ready": player_ready},
+            await websocket.send_json({"user_GUID": player.GUID, "user_ready": player_ready})
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name,
+                                    "user_ready": player_ready},
                                    player.game_id)
         # endregion
 
@@ -221,7 +244,8 @@ class ConnectionManager:
                 await self.broad_cast({"error": "screen_not_found"}, received_game_id)
                 return
 
-            if received_game_id in self.active_connections and screen_player_GUID in self.active_connections[received_game_id]:
+            if received_game_id in self.active_connections and screen_player_GUID in self.active_connections[
+                received_game_id]:
                 connection = self.active_connections[received_game_id][screen_player_GUID]
                 await connection.send_json(received_data)
 

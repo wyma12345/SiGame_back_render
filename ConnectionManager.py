@@ -121,7 +121,7 @@ class ConnectionManager:
             active_players_info = []
             usual_players = db.query(Player).filter(Player.game_id == player.game_id, not Player.is_screen).all()
             for usual_player in usual_players:
-                if usual_player.GUID in self.active_connections[player.game_id]:
+                if usual_player.GUID in self.active_connections[player.game_id].keys():
                     active_players_info.append({
                         "user_name": usual_player.name,
                         "player_ready": usual_player.GUID in self.ready_players[player.game_id],
@@ -171,7 +171,6 @@ class ConnectionManager:
                 self.main_roles[player.game_id]["screen_GUID"] = None
 
             del self.active_connections[player.game_id][player.GUID]  # удаляем соединение
-            await self.screen_cast({"event": "user_disconnect"}, player.game_id)
 
             if not self.active_connections[player.game_id]:  # если игроков не осталось удаляем игру
 

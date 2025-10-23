@@ -118,17 +118,18 @@ class ConnectionManager:
 
             self.main_roles[player.game_id]["screen_GUID"] = player.GUID
 
-            active_players = self.active_connections[player.game_id].keys()  # указываем готовых игроков
-            active_players_info = {}
-            for player_GUID in active_players:
-                active_players_info[player_GUID] = {
-                    "player_ready": player_GUID in self.ready_players,
-                    "user_GUID": player_GUID,
-                    "is_leader": player_GUID == self.main_roles[player.game_id]["leader_GUID"],
-                    "user_name": player.name,
-                }
+            active_players_info = []
+            usual_players = db.query(Player).filter(Player.game_id == player.game_id, not Player.is_screen).all()
+            for usual_player in usual_players:
+                if usual_player.GUID in self.active_connections[player.game_id]:
+                    active_players_info.append({
+                        "user_name": usual_player.name,
+                        "player_ready": usual_player.GUID in self.ready_players[player.game_id],
+                        "user_GUID": usual_player.GUID,
+                        "is_leader": usual_player.GUID == self.main_roles[player.game_id]["leader_GUID"]
+                    })
 
-            await websocket.send_json({"event": "user_connect", "user_GUID": player.GUID})
+            await websocket.send_json({"event": "user_connect", "user_GUID": player.GUID, "players_info": active_players_info})
 
         elif player.is_leader:  # запоминаем лидера
 
@@ -146,7 +147,7 @@ class ConnectionManager:
             player_ready = player.game_id in self.ready_players and player.GUID in self.ready_players[player.game_id]  # готов ли игрок
 
             await websocket.send_json({"user_GUID": player.GUID,  "user_ready": player_ready})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name},
+            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name, "user_ready": player_ready},
                                    player.game_id)
         # endregion
 
@@ -164,9 +165,9 @@ class ConnectionManager:
         if player.game_id in self.active_connections and player.GUID in self.active_connections[player.game_id].keys():
 
             # если это лидер или экран очищаем данные
-            if self.main_roles[player.game_id]["leader_GUID"] == self.active_connections[player.game_id][player.GUID]:
+            if self.main_roles[player.game_id]["leader_GUID"] == player.GUID:
                 self.main_roles[player.game_id]["leader_GUID"] = None
-            if self.main_roles[player.game_id]["screen_GUID"] == self.active_connections[player.game_id][player.GUID]:
+            if self.main_roles[player.game_id]["screen_GUID"] == player.GUID:
                 self.main_roles[player.game_id]["screen_GUID"] = None
 
             del self.active_connections[player.game_id][player.GUID]  # удаляем соединение

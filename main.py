@@ -77,7 +77,7 @@ async def create_game(data=Body()):
     # region проверка возможности подключения игрока
     error: dict = manager.check_add_player(player)
     if error != {}:
-        return JSONResponse(content=error)
+        return JSONResponse(content=error, status_code=400)
     # endregion
 
     db.add(player)

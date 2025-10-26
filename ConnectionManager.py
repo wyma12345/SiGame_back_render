@@ -1,5 +1,6 @@
 # Хранение подключенных клиентов
 # версия 0.00.1
+import os
 import shutil
 import uuid
 import random
@@ -7,7 +8,7 @@ import json
 import xmltodict
 from datetime import datetime, timedelta
 from typing import Dict, Union, List, Set
-import urllib.parse
+from urllib.parse import unquote
 from sqlalchemy import JSON
 from sqlalchemy.orm import relationship
 from starlette.websockets import WebSocket
@@ -16,6 +17,45 @@ from Settings import settings
 from models import db, Package
 from models import Player, Game
 from my_db_func import find_game_id_for_user, unpack_zip_advanced, list_zip_contents
+
+
+async def upload_package(bin_data: bin, name_file: str, player: Player) -> dict:
+
+    existing_file_names = [f for f in os.listdir('.') if os.path.isdir(f)]
+    if name_file in existing_file_names:
+        return {"error": "name_pack_already_taken"}
+
+    upload_package_path: str = f"packages/{name_file}.zip"
+    finally_package_path: str = f"packages/unpacked/{name_file}"
+
+    with open(upload_package_path, 'wb') as f:  # Записываем полученную строку байтов как файл
+        f.write(bin_data)
+
+    error: bool = unpack_zip_advanced(upload_package_path, finally_package_path)
+
+    if error:
+        return {"error": "fail_extract_file"}
+
+    with open(finally_package_path + "/content.xml", encoding="utf8") as xml_file:
+        content = xmltodict.parse(xml_file.read())
+
+    if content is None:
+        return {"error": "error_decryption_content"}
+
+    name_package: str = ""
+    exists_package: Package = db.query(Package).filter(Package.name == name_package).first()
+    if exists_package is not None:
+        return {"error": "name_pack_already_taken"}
+
+    package: Package = Package(templates_pack=finally_package_path, name=name_package,
+                               content=content)  # загрузили пак
+    db.add(package)  # сохраняем в БД
+    db.commit()
+    db.refresh(package)  # обновляем данные из бд, на всякий
+
+    game = db.query(Game).filter(Game.id == player.game_id).first()  # ищем игру по коду
+    game.package_id = package.id
+    db.commit()  # коммитим без add, т.к. игра уже есть
 
 
 class ConnectionManager:
@@ -31,35 +71,29 @@ class ConnectionManager:
 
         # Храним готовность в в иде {game_id: {"user_GUID": bool}}
         self.ready_players: Dict[int, Set[str]] = {}
+
+        self.settings: Dict[int, ""] = {}
         # endregion
 
+        # region удаляем старые игры
         old_games = db.query(Game).filter(
-            Game.time_created < datetime.now() - timedelta(minutes=settings["game_lifetime"]))
+            Game.time_created < datetime.today() - timedelta(hours=settings["game_lifetime"])).all()
+        print("старые игры:", old_games)
         if old_games:
             for old_game in old_games:
-                print(old_game.code)
+                print("Игра удалена", old_game.code)
                 db.delete(old_game)
             db.commit()
+        # endregion
 
-        game_id_delete: bool = False
+        # region заполнение списков подключений
         games = db.query(Game).all()
         for game in games:
-
-            if game.time_created < (datetime.today() - timedelta(hours=1)):
-                db.delete(game)
-                game_id_delete = True
-
             self.active_connections[game.id] = {}
             self.main_roles[game.id] = {"screen_GUID": None, "leader_GUID": None}
             self.ready_players[game.id] = set()
-
-        if game_id_delete:
-            db.commit()
-
-        p = db.query(Player).all()
-        for i in p:
-            db.delete(i)
-        db.commit()
+            self.settings[game.id] = ""
+        # endregion
 
         print("active_connections:", self.active_connections)
         print("games:", db.query(Game).all())
@@ -71,6 +105,14 @@ class ConnectionManager:
         :return:
         """
         return self.main_roles[game_id]["screen_GUID"]
+
+    def __get_leader_GUID(self, game_id) -> str:
+        """
+        Выдает ведущего по id игры
+        :param game_id:
+        :return:
+        """
+        return self.main_roles[game_id]["leader_GUID"]
 
     def check_add_player(self, player: Player) -> dict:
         """
@@ -108,6 +150,16 @@ class ConnectionManager:
         # self.active_connections[game_id][user_GUID] = None  # создание пустого соединения для игрока
 
         return {}
+
+    async def append_settings(self, player: Player, settings: str) -> dict:
+        """
+        Загрузка настроек игры
+        :param player:
+        :return: Сообщение о загрузке
+        """
+        game: Game = player.game
+        game.settings = settings
+        db.commit()
 
     async def connect(self, websocket: WebSocket, user_GUID: str):
         """
@@ -160,7 +212,7 @@ class ConnectionManager:
             package_list = ["test1", "test2", "test3"]
 
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.screen_cast(
+            await self.main_role_cast(
                 {"event": "user_connect", "user_GUID": player.GUID, "is_leader": True, "package_list": package_list},
                 player.game_id)
         else:
@@ -169,7 +221,7 @@ class ConnectionManager:
                 player.game_id]  # готов ли игрок
 
             await websocket.send_json({"user_GUID": player.GUID, "user_ready": player_ready})
-            await self.screen_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name,
+            await self.main_role_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name,
                                     "user_ready": player_ready},
                                    player.game_id)
         # endregion
@@ -222,14 +274,25 @@ class ConnectionManager:
                 db.commit()
 
             else:
-                await self.screen_cast({"event": "user_disconnected", "user_GUID": player.GUID}, player.game_id)
+                await self.main_roles({"event": "user_disconnected", "user_GUID": player.GUID}, player.game_id)
 
-    async def broad_cast(self, received_data: dict, received_game_id: int):
+    async def broad_cast(self, received_data: dict, received_game_id: int, cast_main_role: bool = False):
         """
         Рассылает сообщение всем пользователям в комнате.
+        :param received_data: Данные для отправки
+        :param received_game_id: game_id
+        :param cast_main_role: Отправлять для главным ролям
+        :return:
         """
+
+        main_role_guid = self.main_roles[received_game_id].values()
+
         if received_game_id in self.active_connections:
-            for _, connection in self.active_connections[received_game_id].items():  # рассылаем всем пользователям
+            for user_GUID, connection in self.active_connections[received_game_id].items():  # рассылаем всем пользователям
+
+                if not cast_main_role and user_GUID in main_role_guid:
+                    continue
+
                 if connection is not None:
                     await connection.send_json(received_data)
 
@@ -249,17 +312,38 @@ class ConnectionManager:
                 connection = self.active_connections[received_game_id][screen_player_GUID]
                 await connection.send_json(received_data)
 
-    async def player_ready(self, user_GUID: str, game_id: int, is_ready: bool, ) -> list:
+    async def leader_cast(self, received_data: dict, received_game_id: int):
+        """
+        Отправка информации на ведущего
+        """
+        if received_game_id in self.main_roles:
 
-        if game_id not in self.ready_players:
-            self.ready_players[game_id] = set()
+            leader_player_GUID = self.__get_leader_GUID(received_game_id)  # ищем экран
+            if leader_player_GUID is None:
+                await self.screen_cast({"error": "leader_not_found"}, received_game_id)
+                return
+
+            if received_game_id in self.active_connections and leader_player_GUID in self.active_connections[
+                received_game_id]:
+                connection = self.active_connections[received_game_id][leader_player_GUID]
+                await connection.send_json(received_data)
+
+    async def main_role_cast(self, received_data: dict, received_game_id: int):
+
+        await self.screen_cast(received_data, received_game_id)
+        await self.leader_cast(received_data, received_game_id)
+
+    async def player_ready(self, player: Player, is_ready: bool) -> list:
+
+        if player.game_id not in self.ready_players:
+            self.ready_players[player.game_id] = set()
 
         if is_ready:
-            self.ready_players[game_id].add(user_GUID)
+            self.ready_players[player.game_id].add(player.GUID)
         else:
-            self.ready_players[game_id].discard(user_GUID)
+            self.ready_players[player.game_id].discard(player.GUID)
 
-        return list(self.ready_players[game_id])
+        return list(self.ready_players[player.game_id])
 
     async def start_game(self, player: Player):
         """
@@ -268,41 +352,23 @@ class ConnectionManager:
         :return:
         """
         if not player.is_leader:
-            await self.active_connections[player.game_id][player.GUID].send_json({"error": "это не лидер"})
+            await self.active_connections[player.game_id][player.GUID].send_json({"error": "is_not_leader"})
 
-        if self.active_connections[player.game_id] == self.ready_players[
-            player.game_id]:  # если все подключенные игроки готовы
-            await self.broad_cast({"event": "game_start"}, player.game_id)
+        package = db.query(Package).filter(Package.id == 1).first()
+        if package is None:
+            await self.active_connections[player.game_id][player.GUID].send_json({"error": "bad_package"})
 
-    async def upload_package(self, bin_data: bin, name_package: str, player: Player) -> dict:
+        content: dict = json.loads(unquote(package.content))
+        print(content)
 
-        exists_package: Package = db.query(Package).filter(Package.name == name_package).first()
-        if exists_package is not None:
-            return {"error": "Уже существует такой пак"}
+        game_info = content["package"]
+        first_round_info = content["rounds"][0]
 
-        upload_package_path: str = f"packages/{name_package}.zip"
-        finally_package_path: str = f"packages/unpacked/{name_package}"
+        self.ready_players[player.game_id].add(self.__get_screen_GUID(player.game_id))
+        self.ready_players[player.game_id].add(player.GUID)
 
-        with open(upload_package_path, 'wb') as f:  # Записываем полученную строку байтов как файл
-            f.write(bin_data)
-
-        error: bool = unpack_zip_advanced(upload_package_path, finally_package_path)
-
-        if error:
-            return {"error": "не удалось распаковать файл"}
-
-        with open(finally_package_path + "/content.xml", encoding="utf8") as xml_file:
-            content = xmltodict.parse(xml_file.read())
-
-        if content is None:
-            return {"error": "не удалось перевести в JSON content.xml"}
-
-        package: Package = Package(templates_pack=finally_package_path, name=name_package,
-                                   content=content)  # загрузили пак
-        db.add(package)  # сохраняем в БД
-        db.commit()
-        db.refresh(package)  # обновляем данные из бд, на всякий
-
-        game = db.query(Game).filter(Game.id == player.game_id).first()  # ищем игру по коду
-        game.package_id = package.id
-        db.commit()  # коммитим без add, т.к. игра уже есть
+        if self.active_connections[player.game_id] == self.ready_players[player.game_id]:  # если все подключенные игроки готовы
+            await self.broad_cast({"event": "game_start", "first_round_info": first_round_info}, player.game_id)
+            await self.main_role_cast({"event": "game_start", "game_info": game_info,
+                                       "first_round_info": first_round_info, "settings": self.settings[player.game_id]},
+                                      player.game_id)

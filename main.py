@@ -8,7 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ConnectionManager import ConnectionManager
+from ConnectionManager import ConnectionManager, upload_package
 from Settings import settings
 from models import Player, Package, Game, db
 
@@ -104,10 +104,11 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
             if "event" in data:
 
                 if data["event"] in ("player_ready", "player_unready"):
-                    ready_players = await manager.player_ready(player.GUID, player.game_id, data["event"] == "player_ready")
-                    await websocket.send_json({"status": "success"})
-                    await manager.screen_cast({"event": data["event"], "user_GUID": player.GUID,
+                    ready_players = await manager.player_ready(player, data["event"] == "player_ready")
+                    await websocket.send_json({"event": data["event"]})
+                    await manager.main_role_cast({"event": data["event"], "user_GUID": player.GUID,
                                                "ready_players": ready_players}, player.game_id)
+
                 if data["event"] == "start_game":
                     await websocket.send_json(manager.start_game(player))
 
@@ -122,11 +123,11 @@ async def websocket_endpoint_lobby(websocket: WebSocket, user_GUID: str):
                         await websocket.send_json({"error": "не переданы бинарные данные пака"})
                         continue
 
-                    error = await manager.upload_package(package["bin_data"], package["name"], player)
+                    error = await upload_package(package["bin_data"], package["name"], player)
                     await websocket.send_json(error)
 
             if "settings" in data and player.is_leader:
-                pass
+                await manager.append_settings(data["settings"])
 
     except WebSocketDisconnect:
         await manager.disconnect(player)

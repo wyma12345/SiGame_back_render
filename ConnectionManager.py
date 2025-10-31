@@ -212,7 +212,7 @@ class ConnectionManager:
             package_list = ["test1", "test2", "test3"]
 
             await websocket.send_json({"user_GUID": player.GUID})
-            await self.main_role_cast(
+            await self.main_cast(
                 {"event": "user_connect", "user_GUID": player.GUID, "is_leader": True, "package_list": package_list},
                 player.game_id)
         else:
@@ -221,9 +221,9 @@ class ConnectionManager:
                 player.game_id]  # готов ли игрок
 
             await websocket.send_json({"user_GUID": player.GUID, "user_ready": player_ready})
-            await self.main_role_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name,
+            await self.main_cast({"event": "user_connect", "user_GUID": player.GUID, "user_name": player.name,
                                     "user_ready": player_ready},
-                                   player.game_id)
+                                 player.game_id)
         # endregion
 
         return player
@@ -274,7 +274,7 @@ class ConnectionManager:
                 db.commit()
 
             else:
-                await self.main_roles({"event": "user_disconnected", "user_GUID": player.GUID}, player.game_id)
+                await self.main_cast({"event": "user_disconnected", "user_GUID": player.GUID}, player.game_id)
 
     async def broad_cast(self, received_data: dict, received_game_id: int, cast_main_role: bool = False):
         """
@@ -328,7 +328,7 @@ class ConnectionManager:
                 connection = self.active_connections[received_game_id][leader_player_GUID]
                 await connection.send_json(received_data)
 
-    async def main_role_cast(self, received_data: dict, received_game_id: int):
+    async def main_cast(self, received_data: dict, received_game_id: int):
 
         await self.screen_cast(received_data, received_game_id)
         await self.leader_cast(received_data, received_game_id)
@@ -369,6 +369,6 @@ class ConnectionManager:
 
         if self.active_connections[player.game_id] == self.ready_players[player.game_id]:  # если все подключенные игроки готовы
             await self.broad_cast({"event": "game_start", "first_round_info": first_round_info}, player.game_id)
-            await self.main_role_cast({"event": "game_start", "game_info": game_info,
+            await self.main_cast({"event": "game_start", "game_info": game_info,
                                        "first_round_info": first_round_info, "settings": self.settings[player.game_id]},
-                                      player.game_id)
+                                 player.game_id)

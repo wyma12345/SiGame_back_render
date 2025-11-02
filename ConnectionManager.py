@@ -128,22 +128,22 @@ class ConnectionManager:
 
         # region Проверки
         if player.is_screen and player.is_leader:
-            return {"error": "Лидер не может быть экраном"}
+            return {"error": "leader_not_same_screen"}
 
         if player.is_screen:
             if self.main_roles[player.game_id]["screen_GUID"] is not None:
-                return {"error": "экран только один"}
+                return {"error": "duplicat_screen"}
 
         elif player.is_leader:
             if self.main_roles[player.game_id]["leader_GUID"] is not None:
-                return {"error": "ведущий только один"}
+                return {"error": "duplicat_leader "}
 
         if not player.is_leader and not player.is_screen:
             if player.name == "":
-                return {"error": "имя игрока пустое"}
+                return {"error": "empty_name"}
             if db.query(Player).filter(Player.name == player.name,
                                        Player.game_id == player.game_id).first() is not None:
-                return {"error": "имя игрока дублируется"}
+                return {"error": "duplicat_screen"}
 
         # endregion
 
@@ -151,9 +151,10 @@ class ConnectionManager:
 
         return {}
 
-    async def append_settings(self, player: Player, settings: str) -> dict:
+    async def append_settings(self, player: Player, settings: str):
         """
         Загрузка настроек игры
+        :param settings:
         :param player:
         :return: Сообщение о загрузке
         """
@@ -367,8 +368,10 @@ class ConnectionManager:
         self.ready_players[player.game_id].add(self.__get_screen_GUID(player.game_id))
         self.ready_players[player.game_id].add(player.GUID)
 
-        if self.active_connections[player.game_id] == self.ready_players[player.game_id]:  # если все подключенные игроки готовы
+        if list(self.active_connections[player.game_id].keys()).sort() == list(self.ready_players[player.game_id]).sort():  # если все подключенные игроки готовы
             await self.broad_cast({"event": "game_start", "first_round_info": first_round_info}, player.game_id)
             await self.main_cast({"event": "game_start", "game_info": game_info,
                                        "first_round_info": first_round_info, "settings": self.settings[player.game_id]},
                                  player.game_id)
+        else:
+            await self.leader_cast({"error": "not_all_players_ready"}, player.game_id)

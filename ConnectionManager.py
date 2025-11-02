@@ -114,6 +114,25 @@ class ConnectionManager:
         """
         return self.main_roles[game_id]["leader_GUID"]
 
+    def __get_active_players(self, game_id) -> list:
+        """
+        Возвращает активных игроков в игре
+        :param game_id:
+        :return:
+        """
+        active_players_info = []
+        usual_players = db.query(Player).filter(Player.game_id == game_id).all()
+
+        for usual_player in usual_players:
+            if usual_player.GUID in self.active_connections[game_id].keys() and not usual_player.is_screen:
+                active_players_info.append({
+                    "user_name": usual_player.name,
+                    "player_ready": usual_player.GUID in self.ready_players[game_id],
+                    "user_GUID": usual_player.GUID,
+                    "is_leader": usual_player.GUID == self.main_roles[game_id]["leader_GUID"]
+                })
+        return active_players_info
+
     def check_add_player(self, player: Player) -> dict:
         """
         Добавление пользователя с пустым соединением
@@ -189,17 +208,7 @@ class ConnectionManager:
 
             self.main_roles[player.game_id]["screen_GUID"] = player.GUID
 
-            active_players_info = []
-            usual_players = db.query(Player).filter(Player.game_id == player.game_id).all()
-
-            for usual_player in usual_players:
-                if usual_player.GUID in self.active_connections[player.game_id].keys() and not usual_player.is_screen:
-                    active_players_info.append({
-                        "user_name": usual_player.name,
-                        "player_ready": usual_player.GUID in self.ready_players[player.game_id],
-                        "user_GUID": usual_player.GUID,
-                        "is_leader": usual_player.GUID == self.main_roles[player.game_id]["leader_GUID"]
-                    })
+            active_players_info = self.__get_active_players(player.game_id)
 
             await websocket.send_json(
                 {"event": "user_connect", "user_GUID": player.GUID, "players_info": active_players_info})
@@ -212,7 +221,9 @@ class ConnectionManager:
             self.main_roles[player.game_id]["leader_GUID"] = player.GUID
             package_list = ["test1", "test2", "test3"]
 
-            await websocket.send_json({"user_GUID": player.GUID})
+            active_players_info = self.__get_active_players(player.game_id)
+
+            await websocket.send_json({"user_GUID": player.GUID, "players_info": active_players_info})
             await self.main_cast(
                 {"event": "user_connect", "user_GUID": player.GUID, "is_leader": True, "package_list": package_list},
                 player.game_id)

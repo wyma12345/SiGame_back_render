@@ -13,6 +13,7 @@ def find_game_id_for_user(user_GUID: str) -> int:
     return db.query(Player).filter(Player.GUID == user_GUID).first().game_id
 
 
+
 def unpack_zip_advanced(zip_path, extract_to=None, max_length=255) -> bool:
     """
     Улучшенная версия с обработкой очень длинных путей
